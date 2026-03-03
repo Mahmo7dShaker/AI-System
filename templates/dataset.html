@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Dataset {{ dataset.id }}</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+
+  <body>
+    <h1>Dataset #{{ dataset.id }}</h1>
+    <p><b>File:</b> {{ dataset.original_name }}</p>
+
+    <h2>Preview</h2>
+    <table border="1" cellpadding="6">
+      <thead>
+        <tr>
+          {% for c in columns %}
+          <th>{{ c }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in preview %}
+        <tr>
+          {% for c in columns %}
+          <td>{{ r.get(c, "") }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Mapping</h2>
+    <form action="/dataset/{{ dataset.id }}/mapping" method="post">
+      <p>
+        <label>datetime:</label>
+        <select name="datetime_col" required>
+          {% for c in columns %} {% set chosen = (saved and saved.datetime==c)
+          or (not saved and suggestion.datetime==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>target:</label>
+        <select name="target_col" required>
+          {% for c in columns %} {% set chosen = (saved and saved.target==c) or
+          (not saved and suggestion.target==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>plant_id (optional):</label>
+        <select name="plant_id_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and saved.plant_id==c)
+          or (not saved and suggestion.plant_id==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <h3>Weather (optional)</h3>
+      <p>
+        <label>irradiance:</label>
+        <select name="irr_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and
+          saved.weather.irradiance==c) or (not saved and
+          suggestion.weather.irradiance==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>ambient_temp:</label>
+        <select name="amb_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and
+          saved.weather.ambient_temp==c) or (not saved and
+          suggestion.weather.ambient_temp==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>module_temp:</label>
+        <select name="mod_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and
+          saved.weather.module_temp==c) or (not saved and
+          suggestion.weather.module_temp==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>wind_speed:</label>
+        <select name="wind_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and
+          saved.weather.wind_speed==c) or (not saved and
+          suggestion.weather.wind_speed==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <p>
+        <label>cloud_cover:</label>
+        <select name="cloud_col">
+          <option value="">-- none --</option>
+          {% for c in columns %} {% set chosen = (saved and
+          saved.weather.cloud_cover==c) or (not saved and
+          suggestion.weather.cloud_cover==c) %}
+          <option value="{{ c }}" {% if chosen %}selected{% endif %}>
+            {{ c }}
+          </option>
+          {% endfor %}
+        </select>
+      </p>
+
+      <button type="submit">Save mapping</button>
+    </form>
+    <form
+      action="/dataset/{{ dataset.id }}/process"
+      method="post"
+      style="margin-top: 16px"
+    >
+      <button type="submit">Run preprocessing</button>
+    </form>
+    <form
+      action="/dataset/{{ dataset.id }}/process"
+      method="post"
+      style="margin-top: 16px"
+    >
+      <button type="submit">Run preprocessing</button>
+    </form>
+  </body>
+</html>
