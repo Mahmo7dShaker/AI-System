@@ -1,16 +1,17 @@
 
+
 import numpy as np         
 import pandas as pd          # DataFrames (جداول البيانات زي الإكسيل)
 
 # ==========================================
-# 2. System & Files
+#    System & Files
 # ==========================================
 import joblib                # Save/Load models 
 from pathlib import Path
 import logging               # Track events & errors
 
 # ==========================================
-# 3. Scikit-Learn: Prep & Eval 
+#   Scikit-Learn: Prep & Eval 
 # ==========================================
 from sklearn.model_selection import train_test_split  # Split data and evaluate
 from sklearn.metrics import mean_absolute_error, r2_score # KPIs 
@@ -18,14 +19,14 @@ from sklearn.preprocessing import StandardScaler      # Scale numbers in SVR and
 from sklearn.pipeline import Pipeline                 # Combine steps (دمج التظبيط والتدريب في خطوة واحدة)
 
 # ==========================================
-# 4. Scikit-Learn: Models 
+#    Scikit-Learn: Models 
 # ==========================================
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.svm import SVR                              
 from sklearn.neural_network import MLPRegressor          
 from sklearn.neighbors import KNeighborsRegressor         
 # ==========================================
-# 5. Basic Config (الإعدادات الأساسية)
+#      Basic Config (الإعدادات الأساسية)
 # ==========================================
 # Setup logging
 LOGGER = logging.getLogger("train_baselines")
@@ -56,3 +57,29 @@ def split_features_target(df: pd.DataFrame, target_col: str = "target", test_siz
         "X_test": X_test.reset_index(drop=True),
         "y_test": y_test
     }
+
+# ==========================================
+# 5. traning and Evaluation
+# ==========================================
+def train_and_evaluate(models: dict, X_train : pd.DataFramr, y_train: np.ndarray) -> dict:
+    trained = {}
+    for nam, mdl in models.items():
+        LOGGER.info(f"training {nam} ...")
+
+        mdl.fit(X_train, y_train)
+        trained[name] = mdl
+        
+        joblib.dump(mdl, MODEL_DIR / f' [name].jobllib')
+
+        return trained
+    
+def evaluate(models: dict, X_validation: pd.DataFrame, y_validation: np.ndarray) -> dict:
+    results = {}
+    for name. mdl in models.items():
+        LOGGER.info(f"evaluating {name} ...")
+        y_pred = mdl.predict(X_validation)
+        mae = mean_absolute_error(y_validation, y_pred)
+        results[name] = mae
+        LOGGER.info(f"{name} MAE: {mae:.4f}")
+    return results
+
