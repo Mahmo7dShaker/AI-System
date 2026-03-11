@@ -1,4 +1,5 @@
-import re
+# ------------ mapping.py required for suggesting column mappings based on column names -------------
+import re # Regular expressions for pattern matching
 
 def suggest_mapping(columns: list[str]) -> dict:
     cols = columns

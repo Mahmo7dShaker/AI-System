@@ -1,24 +1,25 @@
-from pathlib import Path
-import uuid
-import shutil
+from pathlib import Path # for handling file paths in a clean way across OSes
+import uuid # for generating unique filenames
+import shutil # for saving uploaded files علشان ميتحملش كله على الram
 import json
 
 from fastapi import FastAPI, Request, UploadFile, File, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.templating import Jinja2Templates # يربط FastAPI بـ Jinja templates.
 from sqlalchemy.orm import Session
 
-from app.deps import get_db
+from app.deps import get_db #يرجع Session لكل request ويقفلها.
 from app.db import engine, Base
 from app.models import Dataset, DatasetMapping
-from app.dataset_io import load_dataframe
-from app.mapping import suggest_mapping
-from ml.features.preprocess import preprocess_with_mapping
+from app.dataset_io import load_dataframe # read csv/xlsx into pandas DataFrame
+from app.mapping import suggest_mapping #read columns aoto
+from ml.features.preprocess import preprocess_with_mapping #مسؤول عن تجهيز data للـ ML:
 
 
 # -------- Paths --------
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent # app/../ looking project root(project file) علشان لو حبيت اشغل الكود من مكان تاني او لو نقلت على جاهز تاني  ميظبطش دايما يبني اي 
+#path بنسبه لroot بتاع المشروع مش بالنسبة لملف 
 
 UPLOAD_DIR = BASE_DIR / "datasets" / "raw"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -58,7 +59,7 @@ def upload_dataset(request: Request, file: UploadFile = File(...), db: Session =
     ext = filename.lower().split(".")[-1]
     if ext not in ("csv", "xlsx", "xls"):
         return {"ok": False, "error": "Only CSV/XLSX/XLS files are allowed"}
-
+    # Generate UUID-based filename 
     stored_name = f"{uuid.uuid4().hex}_{filename}"
     stored_path = UPLOAD_DIR / stored_name
 
@@ -177,7 +178,7 @@ def save_mapping(
     return {"ok": True, "dataset_id": dataset_id, "mapping_id": row.id}
 
 
-# -------- Processing (Day 4) --------
+# -------- Processing--------
 @app.post("/dataset/{dataset_id}/process")
 def process_dataset(dataset_id: int, db: Session = Depends(get_db)):
     ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
@@ -198,7 +199,7 @@ def process_dataset(dataset_id: int, db: Session = Depends(get_db)):
     # load full dataset
     df = load_dataframe(ds.stored_path, nrows=None)
     rows_before = len(df)
-
+    #start processing(pipelines) and get cleaned DataFrame the report
     processed_df, report = preprocess_with_mapping(df, mapping)
     rows_after = len(processed_df)
 

@@ -14,8 +14,9 @@ def preprocess_with_mapping(df: pd.DataFrame, mapping: dict) -> tuple[pd.DataFra
         raise ValueError("datetime column not found in dataframe")
     if not target_col or target_col not in df.columns:
         raise ValueError("target column not found in dataframe")
-
+    # علشان مغيرش فى ال DataFrame الأصلى
     work = df.copy()
+    #  يحول ال datetime ل Timestamp و ال target ل numeric و ال plant_id ل string 
     work["ds_time"] = pd.to_datetime(work[dt_col], errors="coerce", utc=False)
     work["target"] = pd.to_numeric(work[target_col], errors="coerce")
 
@@ -46,10 +47,25 @@ def preprocess_with_mapping(df: pd.DataFrame, mapping: dict) -> tuple[pd.DataFra
     work["hour"] = work["ds_time"].dt.hour
     work["dayofweek"] = work["ds_time"].dt.dayofweek
     work["month"] = work["ds_time"].dt.month
+    work["hour_sin"] = np.sin(2 * np.pi * work["hour"] / 24)
+    work["hour_cos"] = np.cos(2 * np.pi * work["hour"] / 24)
 
+    # fill weather missing values by forward fill then median
     for c in ["irradiance", "ambient_temp", "module_temp", "wind_speed", "cloud_cover"]:
         work[c] = work[c].ffill()
         med = work[c].median() if work[c].notna().any() else 0.0
         work[c] = work[c].fillna(med)
+
+    if "Ac_POWER" in df.columns and "DC_POWER" in df.columns:
+        work["inverter_efficiency"] = np.where(
+            (work["DC_POWER"] > 0),
+            work["AC_POWER"] / work["DC_POWER"],
+            np.nan
+        )
+    
+    if "irradiance" in work.columns and "target" in work.columns:
+        work["possible_sensor_fault"] = (work["irradiance"] > 50) & (work["target"] <= 0)
+    else:
+        work["possible_sensor_fault"] = False
 
     return work, report
