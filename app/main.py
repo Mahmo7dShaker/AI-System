@@ -16,7 +16,8 @@ from app.dataset_io import load_dataframe # read csv/xlsx into pandas DataFrame
 from app.mapping import suggest_mapping #read columns aoto
 from ml.features.preprocess import preprocess_with_mapping #مسؤول عن تجهيز data للـ ML:
 
-
+from ml.training.train_baselines import train_pipeline # main training function that runs the whole ML pipeline
+from fastapi import BackgroundTasks
 # -------- Paths --------
 BASE_DIR = Path(__file__).resolve().parent.parent # app/../ looking project root(project file) علشان لو حبيت اشغل الكود من مكان تاني او لو نقلت على جاهز تاني  ميظبطش دايما يبني اي 
 #path بنسبه لroot بتاع المشروع مش بالنسبة لملف 
@@ -27,6 +28,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR = BASE_DIR / "runtime" / "processed"
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
+MODELS_DIR = BASE_DIR / "runtime" / "models"
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
@@ -215,3 +218,14 @@ def process_dataset(dataset_id: int, db: Session = Depends(get_db)):
         "processed_path": str(out_path),
         "columns": list(processed_df.columns),
     }
+
+# -------- Training 
+@app.post("/dataset/{dataset_id}/train")
+def train_model(dataset_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    processed_path = PROCESSED_DIR / f"dataset_{dataset_id}_processed.csv"
+    # 2. Pre-condition Check
+    if not processed_path.exists():
+        return {"ok": False, "error": "Processed file not found. Run preprocessing first."}
+    
+    background_tasks.add_task(train_pipeline, processed_path)
+    return {"ok": True, "message": f"Training started in the background for dataset {dataset_id}"}
