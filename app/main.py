@@ -1,38 +1,50 @@
-from pathlib import Path # for handling file paths in a clean way across OSes
-import uuid # for generating unique filenames
-import shutil # for saving uploaded files علشان ميتحملش كله على الram
+from pathlib import Path
+import uuid
+import shutil
 import json
+import logging
 
-from fastapi import FastAPI, Request, UploadFile, File, Form, Depends
+from fastapi import FastAPI, Request, UploadFile, File, Form, Depends, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates # يربط FastAPI بـ Jinja templates.
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from app.deps import get_db #يرجع Session لكل request ويقفلها.
+from app.deps import get_db
 from app.db import engine, Base
-from app.models import Dataset, DatasetMapping
-from app.dataset_io import load_dataframe # read csv/xlsx into pandas DataFrame
-from app.mapping import suggest_mapping #read columns aoto
-from ml.features.preprocess import preprocess_with_mapping #مسؤول عن تجهيز data للـ ML:
+from app.models import Dataset, DatasetMapping, ProcessedRun # إضافة ProcessedRun
+from app.dataset_io import load_dataframe
+from app.mapping import suggest_mapping
+from ml.features.preprocess import preprocess_with_mapping
+from ml.training.train_baselines import train_pipeline
 
-from ml.training.train_baselines import train_pipeline # main training function that runs the whole ML pipeline
-from fastapi import BackgroundTasks
 # -------- Paths --------
-BASE_DIR = Path(__file__).resolve().parent.parent # app/../ looking project root(project file) علشان لو حبيت اشغل الكود من مكان تاني او لو نقلت على جاهز تاني  ميظبطش دايما يبني اي 
-#path بنسبه لroot بتاع المشروع مش بالنسبة لملف 
+BASE_DIR = Path(__file__).resolve().parent.parent
 
-UPLOAD_DIR = BASE_DIR / "datasets" / "raw"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-PROCESSED_DIR = BASE_DIR / "runtime" / "processed"
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-
+RAW_DIR = BASE_DIR / "datasets" / "01_raw"
+PROCESSED_DIR = BASE_DIR / "datasets" / "02_processed"
+FEATURES_DIR = BASE_DIR / "datasets" / "03_features"
+META_DIR = BASE_DIR / "datasets" / "metadata"
 MODELS_DIR = BASE_DIR / "runtime" / "models"
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
-TEMPLATES_DIR = BASE_DIR / "templates"
-STATIC_DIR = BASE_DIR / "static"
 
+for d in [RAW_DIR, PROCESSED_DIR, FEATURES_DIR, META_DIR, MODELS_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
+
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static" 
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "solarmind_system.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE), 
+        logging.StreamHandler()        
+    ]
+)
 
 # -------- App --------
 app = FastAPI(title="SolarMind")
@@ -44,8 +56,7 @@ def on_startup():
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-
-# -------- Basic --------
+# -------- Routes --------
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -54,178 +65,81 @@ def health():
 def home(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-
-# -------- Upload --------
 @app.post("/upload")
 def upload_dataset(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
     filename = file.filename or "file"
     ext = filename.lower().split(".")[-1]
     if ext not in ("csv", "xlsx", "xls"):
-        return {"ok": False, "error": "Only CSV/XLSX/XLS files are allowed"}
-    # Generate UUID-based filename 
+        return {"ok": False, "error": "Only CSV/XLSX/XLS allowed"}
+    
     stored_name = f"{uuid.uuid4().hex}_{filename}"
-    stored_path = UPLOAD_DIR / stored_name
+    stored_path = RAW_DIR / stored_name # save in 01_raw
 
     with stored_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    row = Dataset(
-        original_name=filename,
-        stored_name=stored_name,
-        stored_path=str(stored_path),
-    )
+    row = Dataset(original_name=filename, stored_name=stored_name, stored_path=str(stored_path))
     db.add(row)
     db.commit()
     db.refresh(row)
 
-    accept = request.headers.get("accept", "")
-    if "text/html" in accept:
+    if "text/html" in request.headers.get("accept", ""):
         return RedirectResponse(url=f"/dataset/{row.id}", status_code=303)
+    return {"ok": True, "dataset_id": row.id}
 
-    return {"ok": True, "dataset_id": row.id, "stored_name": stored_name}
-
-
-# -------- List datasets --------
-@app.get("/datasets")
-def list_datasets(db: Session = Depends(get_db)):
-    items = db.query(Dataset).order_by(Dataset.id.desc()).limit(20).all()
-    return [
-        {
-            "id": x.id,
-            "original_name": x.original_name,
-            "stored_name": x.stored_name,
-            "stored_path": x.stored_path,
-            "uploaded_at": x.uploaded_at.isoformat() if x.uploaded_at else None,
-        }
-        for x in items
-    ]
-
-
-# -------- Dataset page + mapping --------
 @app.get("/dataset/{dataset_id}", response_class=HTMLResponse)
 def dataset_page(dataset_id: int, request: Request, db: Session = Depends(get_db)):
     ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not ds:
-        return HTMLResponse("Dataset not found", status_code=404)
-
+    if not ds: return HTMLResponse("Not found", status_code=404)
     df = load_dataframe(ds.stored_path, nrows=50)
-    cols = list(df.columns)
-
-    suggestion = suggest_mapping(cols)
-
-    last_map = (
-        db.query(DatasetMapping)
-        .filter(DatasetMapping.dataset_id == dataset_id)
-        .order_by(DatasetMapping.id.desc())
-        .first()
-    )
-    saved = json.loads(last_map.mapping_json) if last_map else None
-
-    preview_rows = df.head(8).fillna("").to_dict(orient="records")
-
-    return templates.TemplateResponse(
-        "dataset.html",
-        {
-            "request": request,
-            "dataset": ds,
-            "columns": cols,
-            "preview": preview_rows,
-            "suggestion": suggestion,
-            "saved": saved,
-        },
-    )
-
+    suggestion = suggest_mapping(list(df.columns))
+    return templates.TemplateResponse("dataset.html", {"request": request, "dataset": ds, "columns": list(df.columns), "suggestion": suggestion})
 
 @app.post("/dataset/{dataset_id}/mapping")
-def save_mapping(
-    dataset_id: int,
-    request: Request,
-    datetime_col: str = Form(...),
-    target_col: str = Form(...),
-    plant_id_col: str = Form(""),
-    irr_col: str = Form(""),
-    amb_col: str = Form(""),
-    mod_col: str = Form(""),
-    wind_col: str = Form(""),
-    cloud_col: str = Form(""),
-    db: Session = Depends(get_db),
-):
-    ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not ds:
-        return {"ok": False, "error": "Dataset not found"}
-
-    mapping = {
-        "datetime": datetime_col or None,
-        "plant_id": plant_id_col or None,
-        "target": target_col or None,
-        "weather": {
-            "irradiance": irr_col or None,
-            "ambient_temp": amb_col or None,
-            "module_temp": mod_col or None,
-            "wind_speed": wind_col or None,
-            "cloud_cover": cloud_col or None,
-        },
-    }
-
-    row = DatasetMapping(
-        dataset_id=dataset_id,
-        mapping_json=json.dumps(mapping, ensure_ascii=False),
-    )
+def save_mapping(dataset_id: int, request: Request, datetime_col: str = Form(...), target_col: str = Form(...), db: Session = Depends(get_db), **kwargs):
+    # save the mapping in the database for later use during processing
+    mapping = {"datetime": datetime_col, "target": target_col, "weather": kwargs}
+    row = DatasetMapping(dataset_id=dataset_id, mapping_json=json.dumps(mapping))
     db.add(row)
     db.commit()
+    return RedirectResponse(url=f"/dataset/{dataset_id}", status_code=303)
 
-    accept = request.headers.get("accept", "")
-    if "text/html" in accept:
-        return RedirectResponse(url=f"/dataset/{dataset_id}", status_code=303)
-
-    return {"ok": True, "dataset_id": dataset_id, "mapping_id": row.id}
-
-
-# -------- Processing--------
 @app.post("/dataset/{dataset_id}/process")
 def process_dataset(dataset_id: int, db: Session = Depends(get_db)):
     ds = db.query(Dataset).filter(Dataset.id == dataset_id).first()
-    if not ds:
-        return {"ok": False, "error": "Dataset not found"}
-
-    last_map = (
-        db.query(DatasetMapping)
-        .filter(DatasetMapping.dataset_id == dataset_id)
-        .order_by(DatasetMapping.id.desc())
-        .first()
-    )
-    if not last_map:
-        return {"ok": False, "error": "No mapping saved for this dataset"}
+    last_map = db.query(DatasetMapping).filter(DatasetMapping.dataset_id == dataset_id).order_by(DatasetMapping.id.desc()).first()
+    if not ds or not last_map: return {"ok": False, "error": "Missing data or mapping"}
 
     mapping = json.loads(last_map.mapping_json)
-
-    # load full dataset
-    df = load_dataframe(ds.stored_path, nrows=None)
-    rows_before = len(df)
-    #start processing(pipelines) and get cleaned DataFrame the report
+    df = load_dataframe(ds.stored_path)
+    rows_before = len(df) # حساب عدد الصفوف قبل المعالجة
+    
     processed_df, report = preprocess_with_mapping(df, mapping)
-    rows_after = len(processed_df)
+    rows_after = len(processed_df) # حساب عدد الصفوف بعد المعالجة
 
-    out_path = PROCESSED_DIR / f"dataset_{dataset_id}_processed.csv"
+    # save the processed features in 03_features for later use in training
+    out_path = FEATURES_DIR / f"ds_{dataset_id}_final.csv"
     processed_df.to_csv(out_path, index=False)
 
-    return {
-        "ok": True,
-        "dataset_id": dataset_id,
-        "rows_before": rows_before,
-        "rows_after": rows_after,
-        "dropped_rows": report.get("dropped_rows", 0),
-        "processed_path": str(out_path),
-        "columns": list(processed_df.columns),
-    }
+    # save a record of this processing run in the database
+    new_run = ProcessedRun(
+        dataset_id=dataset_id,
+        mapping_id=last_map.id,
+        processed_path=str(out_path),
+        rows_before=rows_before,
+        rows_after=rows_after
+    )
+    db.add(new_run)
+    db.commit()
 
-# -------- Training 
+    return {"ok": True, "path": str(out_path), "report": report}
+
 @app.post("/dataset/{dataset_id}/train")
 def train_model(dataset_id: int, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    processed_path = PROCESSED_DIR / f"dataset_{dataset_id}_processed.csv"
-    # 2. Pre-condition Check
-    if not processed_path.exists():
+    
+    feature_path = FEATURES_DIR / f"ds_{dataset_id}_final.csv"
+    if not feature_path.exists():
         return {"ok": False, "error": "Processed file not found. Run preprocessing first."}
     
-    background_tasks.add_task(train_pipeline, processed_path)
-    return {"ok": True, "message": f"Training started in the background for dataset {dataset_id}"}
+    background_tasks.add_task(train_pipeline, feature_path)
+    return {"ok": True, "message": "Training started in background"}

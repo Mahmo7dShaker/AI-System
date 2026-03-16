@@ -2,7 +2,7 @@
 from pathlib import Path
 import pandas as pd # علشان نحول الملف ل DataFrame
 
-def load_dataframe(path: str, nrows: int | None = 200) -> pd.DataFrame:
+def load_dataframe(path: str, nrows: int | None = None) -> pd.DataFrame:
     p = Path(path)
     ext = p.suffix.lower()
 
